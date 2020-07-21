@@ -552,19 +552,224 @@ This is Apache Web Server!
 ```
 
 
+--------- 
+# Revoke a certificate:
+This is a complex topic, and presents many challenges. 
+
+Ideally, it should be like this:
+*"You revoke a certificate on the RootCA machine, and then distribute that CRL to a (central) location, where a client can consult the CRL before making the SSL connection with the server. If  the the client sees that the certificate (presented to it by the server) is in the "revoke list", it does not establish any SSL connection. If it sees that the certificate presented is not revoked , the client continues and establishes SSL connection with the server."*
+
+When the internet was small, and fewer sites were using SSL, this was an easy problem to solve. However, in today's (very connected) internet world, this is not practical anymore. Also, the problems are of different nature when it is a server certificate or if it is a user certificate. An apache server (on web-server.example.com) can be a client when checking a common CRL location (.e.g http://rootca.example.com/crl) to verify user certificates. 
+
+A web browser (firefox), or a cli tool (curl) would need to check a CRL location when making a connection with an SSL site. You can manually pass a CRL location to curl.
 
 
+## First, we discuss: Steps to revoke a certificate:
+
+On the rootCA server, change directory into /root/easyrsa.
+
+Check the list of issued certificates under /root/easy-rsa/pki/issued/. Then, find the name of the file to be revoked.
+
+```
+[root@rootca easy-rsa]# pwd
+/root/easy-rsa
+[root@rootca easy
+
+[root@rootca easy-rsa]# ls -l pki/issued/
+total 8
+-rw------- 1 root root 4899 Jul 15 23:58 web-server.example.com.crt
+[root@rootca easy-rsa]# 
+```
 
 
+Now use the filename without the `.crt` in the `revoke` command:
+
+```
+[root@rootca easy-rsa]# easyrsa revoke web-server.example.com
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+Using SSL: openssl OpenSSL 1.0.2k-fips  26 Jan 2017
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
 
 
+Please confirm you wish to revoke the certificate with the following subject:
 
+subject= 
+    countryName               = NO
+    stateOrProvinceName       = Oslo
+    localityName              = Oslo
+    organizationName          = Exemplary Company
+    organizationalUnitName    = IT
+    commonName                = web-server.example.com
+    emailAddress              = admin@example.com
+
+X509v3 Subject Alternative Name:
+    DNS:web-server.example.com
+
+
+Type the word 'yes' to continue, or any other input to abort.
+  Continue with revocation: yes
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+Using configuration from /root/easy-rsa/pki/easy-rsa-924.nBAxUE/tmp.ITa2Fz
+Enter pass phrase for /root/easy-rsa/pki/private/ca.key:
+Revoking Certificate 59447957AA0DC882897A5D6344CD3727.
+Data Base Updated
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+
+IMPORTANT!!!
+
+Revocation was successful. You must run gen-crl and upload a CRL to your
+infrastructure in order to prevent the revoked cert from being accepted.
+
+
+[root@rootca easy-rsa]# 
+```
+
+
+Good. Though if you access the web server from a client, the client would still think that the certificate is valid, and there will be no complains. 
+
+
+```
+[root@web-server ~]# curl https://web-server.example.com
+This is Apache Web Server!
+[root@web-server ~]# 
+```
+
+Now it is time to generate a CRL (Certificate Revokation List).
+
+```
+[root@rootca easy-rsa]# easyrsa gen-crl
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+Using SSL: openssl OpenSSL 1.0.2k-fips  26 Jan 2017
+WARNING: can't open config file: /root/easy-rsa/pki/safessl-easyrsa.cnf
+Using configuration from /root/easy-rsa/pki/easy-rsa-965.NTerC6/tmp.M3ohI2
+Enter pass phrase for /root/easy-rsa/pki/private/ca.key:
+
+An updated CRL has been created.
+CRL file: /root/easy-rsa/pki/crl.pem
+
+
+[root@rootca easy-rsa]# 
+```
+
+The generated CRL looks like this:
+```
+[root@rootca easy-rsa]# cat pki/crl.pem 
+-----BEGIN X509 CRL-----
+MIIB3jCBxwIBATANBgkqhkiG9w0BAQsFADAdMRswGQYDVQQDDBJyb290Y2EuZXhh
+bXBsZS5jb20XDTIwMDcyMTIxNDk1MFoXDTIxMDExNzIxNDk1MFowIzAhAhBZRHlX
+qg3Igol6XWNEzTcnFw0yMDA3MjEyMTQ3MDJaoFEwTzBNBgNVHSMERjBEgBR4fMs1
+p2xZF2Q2FAq6SX/RExRMlMNhpXCJTIUPIXkQAaTPwZXXbBLw8zVjVuu9CK1bVxzQ
+iieRuxcHl3ReNajJqTTU9UzS0Dwrs2MmD4/ugqJfXCIm8jg1opGuDpHusy3JA355
+s4UKxANU1oKbJk/m4spk6gT8csDVZgJObaELR9E400quLj2Hwk9xXg5b6EVuBBCE
+KIvBmPRTeAvqHB4cm7Xdl5mJoY/npRjkm0zPVnfdoHAWTF+/Yk7tzpIX2zAiEbnC
+oho=
+-----END X509 CRL-----
+[root@rootca easy-rsa]# 
+```
+
+## Distribute CRL:
+Alright, we now have CRL file from the rootCA server, for the web-server's SSL certificate that we revoked. Where do we send this CRL? For sake of example, we copy it to web-server in a temporary location, and use curl to access the website.
+
+```
+[root@rootca easy-rsa]# scp pki/crl.pem root@192.168.122.51:/tmp/
+```
+
+On the web server, access the website over HTTPS:
+
+```
+[root@web-server pki]# curl https://web-server.example.com
+This is Apache Web Server!
+[root@web-server pki]#
+```
+
+It worked as curl has no idea that this certificate is revoked. We are going to tell curl about a location, where it can check if any certificates are revoked. This time we see that the certificate has been revoked.
+
+```
+[root@web-server pki]# curl --crlfile /tmp/crl.pem         https://web-server.example.com
+curl: (60) Peer's Certificate has been revoked.
+More details here: http://curl.haxx.se/docs/sslcerts.html
+
+curl performs SSL certificate verification by default, using a "bundle"
+ of Certificate Authority (CA) public keys (CA certs). If the default
+ bundle file isn't adequate, you can specify an alternate file
+ using the --cacert option.
+If this HTTPS server uses a certificate signed by a CA represented in
+ the bundle, the certificate verification probably failed due to a
+ problem with the certificate (it might be expired, or the name might
+ not match the domain name in the URL).
+If you'd like to turn off curl's verification of the certificate, use
+ the -k (or --insecure) option.
+[root@web-server pki]# 
+```
+
+
+## Problems with CRLs (Certificate revocation list)
+(This section is taken from wikipedia)
+Best practices require that wherever and however certificate status is maintained, it must be checked whenever one wants to rely on a certificate. Failing this, a revoked certificate may be incorrectly accepted as valid. This means that to use a PKI effectively, one must have access to current CRLs. This requirement of on-line validation negates one of the original major advantages of PKI over symmetric cryptography protocols, namely that the certificate is "self-authenticating". Symmetric systems such as Kerberos also depend on the existence of on-line services (a key distribution center in the case of Kerberos).
+
+The existence of a CRL implies the need for someone (or some organization) to enforce policy and revoke certificates deemed counter to operational policy. If a certificate is mistakenly revoked, significant problems can arise. As the certificate authority is tasked with enforcing the operational policy for issuing certificates, they typically are responsible for determining if and when revocation is appropriate by interpreting the operational policy.
+
+The necessity of consulting a CRL (or other certificate status service) prior to accepting a certificate raises a potential denial-of-service attack against the PKI. If acceptance of a certificate fails in the absence of an available valid CRL, then no operations depending upon certificate acceptance can take place. This issue exists for Kerberos systems as well, where failure to retrieve a current authentication token will prevent system access.
+
+An alternative to using CRLs is the certificate validation protocol known as Online Certificate Status Protocol (OCSP). OCSP has the primary benefit of requiring less network bandwidth, enabling real-time and near real-time status checks for high volume or high-value operations.
+
+As of Firefox 28, Mozilla have announced they are deprecating CRL in favour of OCSP.
+
+CRL files may grow quite large over time e.g. in US government, for certain institution multiple megabytes. Therefore, incremental CRLs have been designed sometimes referred to as "delta CRLs". However, only a few clients implement them.
+
+
+ 
+## The Online Certificate Status Protocol (OCSP)
+
+It is an Internet protocol used for obtaining the revocation status of an X.509 digital certificate.[1] It is described in RFC 6960 and is on the Internet standards track. It was created as an alternative to certificate revocation lists (CRL), specifically addressing certain problems associated with using CRLs in a public key infrastructure (PKI). Messages communicated via OCSP are encoded in ASN.1 and are usually communicated over HTTP. The "request/response" nature of these messages leads to OCSP servers being termed OCSP responders.
+
+### Comparison to CRLs
+Since an OCSP response contains less data than a typical certificate revocation list (CRL), it puts less burden on network and client resources.
+Since an OCSP response has less data to parse, the client-side libraries that handle it can be less complex than those that handle CRLs.
+OCSP discloses to the responder that a particular network host used a particular certificate at a particular time. OCSP does not mandate encryption, so other parties may intercept this information.
+
+### Deployment / browser support:
+
+* Internet Explorer is built on the CryptoAPI of Windows and thus starting with version 7 on Windows Vista (not XP[7]) supports OCSP checking.
+* All versions of Mozilla Firefox support OCSP checking. Firefox 3 enables OCSP checking by default.
+* Safari on macOS supports OCSP checking. It is enabled by default as of Mac OS X 10.7 (Lion). Prior to that, it has to be manually activated in Keychain preferences.
+* Versions of Opera from 8.0 to the current version support OCSP checking.
+* Google Chrome is an outlier. Google disabled OCSP checks by default in 2012, citing latency and privacy issues and instead uses their own update mechanism to send revoked certificates to the browser.
+
+
+## OSCP Stapling:
+The original OCSP implementation has a number of issues.
+
+Firstly, it can introduce a significant cost for the certificate authorities (CA) because it requires them to provide responses to every client of a given certificate in real time. For example, when a certificate is issued to a high traffic website, the servers of CAs are likely to be hit by enormous volumes of OCSP requests querying the validity of the certificate.
+
+Also, OCSP checking potentially impairs users' privacy and slows down browsing, since it requires the client to contact a third party (the CA) to confirm the validity of each certificate that it encounters.
+
+Moreover, if the client fails to connect to the CA for an OCSP response, then it is forced to decide between: (a) continuing the connection anyway; defeating the purpose of OCSP or (b) terminating the connection based on the assumption that there is an attack; but which could result in excessive false warnings and blocks.
+
+OCSP stapling is aimed at addressing these issues with the original OCSP implementation.
+
+### Deployment / browser support:
+OCSP stapling support is being progressively implemented. The OpenSSL project included support in their 0.9.8g release with the assistance of a grant from the Mozilla Foundation.
+
+Apache HTTP Server supports OCSP stapling since version 2.3.3, the nginx web server since version 1.3.7, LiteSpeed Web Server since version 4.2.4, Microsoft's IIS since Windows Server 2008, HAProxy since version 1.5.0, F5 Networks BIG-IP since version 11.6.0 and KEMP LoadMasters since Version 7.2.37.1.
+
+While many web servers advertise support for OCSP stapling, implementations are not always reliable. For example, when Apache queries the OCSP server, in the event of a temporary failure, it will discard the cached good response from the previous request, and start serving bad response. Nginx is lazy loading OCSP responses, which means that for the first few web requests it is unable to add the OCSP response.
+
+On the browser side, OCSP stapling was implemented in Firefox 26, in Internet Explorer since Windows Vista, and Google Chrome in Linux, Chrome OS, and Windows since Vista.
 
 
 ---
 # References:
 
-[https://www.digitalocean.com/community/tutorials/how-to-set-up-and-configure-a-certificate-authority-ca-on-debian-10](https://www.digitalocean.com/community/tutorials/how-to-set-up-and-configure-a-certificate-authority-ca-on-debian-10)
+* [https://www.digitalocean.com/community/tutorials/how-to-set-up-and-configure-a-certificate-authority-ca-on-debian-10](https://www.digitalocean.com/community/tutorials/how-to-set-up-and-configure-a-certificate-authority-ca-on-debian-10)
+* [https://medium.com/@alexeysamoshkin/how-ssl-certificate-revocation-is-broken-in-practice-af3b63b9cb3](https://medium.com/@alexeysamoshkin/how-ssl-certificate-revocation-is-broken-in-practice-af3b63b9cb3)
+* [https://en.wikipedia.org/wiki/Certificate_revocation_list](https://en.wikipedia.org/wiki/Certificate_revocation_list)
+* [https://en.wikipedia.org/wiki/Online_Certificate_Status_Protocol](https://en.wikipedia.org/wiki/Online_Certificate_Status_Protocol)
+* [https://en.wikipedia.org/wiki/OCSP_stapling](https://en.wikipedia.org/wiki/OCSP_stapling)
+
 ---
 
 # Errors:
